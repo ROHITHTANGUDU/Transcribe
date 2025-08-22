@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Active Tab Audio Recorder (Chunks, Offscreen)",
+  "version": "2.0.5",
+  "description": "Capture audio from the current active tab; chunk it. Falls back to the picker for DRM sites.",
+  "action": { "default_title": "Open recorder" },
+  "permissions": [
+    "sidePanel",
+    "tabs",
+    "tabCapture",
+    "offscreen",
+    "activeTab"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "side_panel": { "default_path": "sidepanel.html" },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self';"
+  }
+}

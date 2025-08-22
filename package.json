@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "ts-ebml": "^3.0.1"
+  }
+}

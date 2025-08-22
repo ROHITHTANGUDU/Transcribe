@@ -1,0 +1,484 @@
+# # server.py
+# import os
+# import json
+# import logging
+# import tempfile
+# from typing import Optional
+
+# from dotenv import load_dotenv
+# from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+# from fastapi.middleware.cors import CORSMiddleware
+# from openai import OpenAI
+
+# # ──────────────────────────────────────────────────────────────────────────────
+# # Env & logging
+# # ──────────────────────────────────────────────────────────────────────────────
+# load_dotenv()
+
+# logging.basicConfig(level=logging.INFO)
+# logger = logging.getLogger("server")
+
+# OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# if not OPENAI_API_KEY:
+#     raise RuntimeError("OPENAI_API_KEY environment variable not set")
+
+# client = OpenAI(api_key=OPENAI_API_KEY)
+
+# # ──────────────────────────────────────────────────────────────────────────────
+# # App
+# # ──────────────────────────────────────────────────────────────────────────────
+# app = FastAPI(title="Audio Transcription Server")
+
+# # CORS: relax for dev; restrict in prod
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=["*"],      # e.g. ["http://localhost:5173"]
+#     allow_credentials=True,
+#     allow_methods=["POST", "GET", "OPTIONS"],
+#     allow_headers=["*"],
+# )
+
+# # ──────────────────────────────────────────────────────────────────────────────
+# # Routes
+# # ──────────────────────────────────────────────────────────────────────────────
+# @app.post("/transcribe_chunk")
+# async def transcribe_audio(
+#     file: UploadFile = File(..., description="Audio file to transcribe (e.g., audio/webm;codecs=opus)"),
+#     config: str = Form("{}", description='JSON config: {"language":"en","prompt":"", "temperature":0.0}')
+# ):
+#     """
+#     Transcribe a single audio chunk with Whisper via OpenAI v1 SDK.
+#     Accepts typical browser chunks like audio/webm (Opus).
+#     """
+#     try:
+#         # Read entire upload
+#         content: bytes = await file.read()
+#         size = len(content)
+#         logger.info(f"Received file: {file.filename}, Size: {size} bytes")
+#         logger.info(f"Configuration: {config}")
+
+#         # Parse config (safe defaults)
+#         try:
+#             cfg = json.loads(config) if config else {}
+#         except json.JSONDecodeError:
+#             cfg = {}
+#             logger.warning("Invalid config JSON; using defaults.")
+
+#         language: str = cfg.get("language", "en")
+#         prompt: Optional[str] = cfg.get("prompt")
+#         # temperature is optional; Whisper may ignore it depending on backend behavior
+#         try:
+#             temperature: Optional[float] = float(cfg.get("temperature", 0.0))
+#         except (TypeError, ValueError):
+#             temperature = 0.0
+
+#         # Basic size guard to avoid bogus requests
+#         if size < 5_000:  # ~5KB
+#             msg = f"Audio chunk too small ({size} bytes). Minimum 5KB required."
+#             logger.error(msg)
+#             raise HTTPException(status_code=400, detail=msg)
+
+#         # Persist to a temp file (OpenAI SDK expects a file-like)
+#         with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp:
+#             tmp.write(content)
+#             temp_path = tmp.name
+
+#         try:
+#             # Transcribe using the new v1 client
+#             with open(temp_path, "rb") as audio_f:
+#                 transcript = client.audio.transcriptions.create(
+#                     model="whisper-1",
+#                     file=audio_f,
+#                     language=language,   # e.g., "en"
+#                     prompt=prompt,       # optional priming text
+#                     temperature=temperature,
+#                 )
+
+#             text = (transcript.text or "").strip()
+#             logger.info(f"Transcribed OK ({len(text)} chars): {text[:120]}...")
+
+#             return {
+#                 "status": "success",
+#                 "filename": file.filename,
+#                 "bytes": size,
+#                 "language": language,
+#                 "text": text,
+#             }
+
+#         finally:
+#             # Clean up temp file
+#             try:
+#                 os.unlink(temp_path)
+#             except Exception as e:
+#                 logger.warning(f"Error deleting temp file: {e}")
+
+#     except HTTPException:
+#         # Re-raise client errors as-is
+#         raise
+#     except Exception as e:
+#         logger.error(f"Transcription failed: {e}")
+#         raise HTTPException(status_code=500, detail=f"Transcription error: {e}")
+
+# @app.get("/health")
+# async def health_check():
+#     """Simple health check."""
+#     return {
+#         "status": "healthy",
+#         "service": "audio-transcription",
+#         "openai_ready": bool(OPENAI_API_KEY),
+#     }
+
+# # ──────────────────────────────────────────────────────────────────────────────
+# # Entrypoint (dev)
+# # ──────────────────────────────────────────────────────────────────────────────
+# if __name__ == "__main__":
+#     import uvicorn
+#     uvicorn.run(
+#         "server:app",
+#         host="0.0.0.0",
+#         port=8000,
+#         log_level="info",
+#         reload=True
+#     )
+# requirements:
+#   deepgram-sdk>=3.0.0  (pip install deepgram-sdk)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# from fastapi import FastAPI, UploadFile, File, Form
+# from fastapi.middleware.cors import CORSMiddleware
+# from deepgram import DeepgramClient, PrerecordedOptions
+# import os
+# import logging
+# import json
+# from dotenv import load_dotenv
+
+# load_dotenv()
+# logging.basicConfig(level=logging.INFO)
+# logger = logging.getLogger("deepgram-webm-processor")
+
+# app = FastAPI()
+
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=["*"],
+#     allow_methods=["POST"],
+#     allow_headers=["*"],
+# )
+
+# DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
+# if not DEEPGRAM_API_KEY:
+#     raise RuntimeError("Missing DEEPGRAM_API_KEY")
+# dg = DeepgramClient(DEEPGRAM_API_KEY)
+
+# # WebM EBML header template
+# EBML_HEADER = bytes([
+#     0x1A, 0x45, 0xDF, 0xA3,  # EBML magic
+#     0x01, 0x00, 0x00, 0x00,   # Header size
+#     0x42, 0x86, 0x81, 0x01,   # Doc type = "webm"
+#     0x18, 0x53, 0x80, 0x67    # Segment info
+# ])
+
+# def validate_and_repair_webm(chunk: bytes) -> bytes:
+#     """Ensure the WebM chunk has proper EBML headers"""
+#     # Check for existing EBML header
+#     if len(chunk) >= 4 and chunk[0] == 0x1A and chunk[1] == 0x45 and chunk[2] == 0xDF and chunk[3] == 0xA3:
+#         return chunk  # Already has headers
+    
+#     # Prepend EBML header if missing
+#     logger.warning("WebM header missing - repairing")
+#     return EBML_HEADER + chunk
+
+# def hexdump(b: bytes, length: int = 128) -> str:
+#     return " ".join(f"{x:02X}" for x in b[:length])
+
+# @app.post("/transcribe_chunk")
+# async def transcribe_webm(
+#     file: UploadFile = File(...),
+#     config: str = Form("{}")
+# ):
+#     try:
+#         chunk = await file.read()
+        
+#         # Skip chunks that are too small to contain meaningful audio
+#         if len(chunk) < 2048:
+#             logger.info("Skipping small chunk")
+#             return {"status": "success", "text": ""}
+
+#         # Parse configuration
+#         try:
+#             cfg = json.loads(config)
+#         except json.JSONDecodeError:
+#             cfg = {}
+#             logger.warning("Using default config")
+
+#         # Detect file type
+#         ext = os.path.splitext(file.filename)[1].lower()
+#         if ext == ".wav":
+#             mimetype = "audio/wav"
+#             buffer = chunk
+#         else:
+#             mimetype = "audio/webm;codecs=opus"
+#             buffer = validate_and_repair_webm(chunk)
+
+#         options = PrerecordedOptions(
+#             model=cfg.get("model", "nova-2"),
+#             language=cfg.get("language", "en-US"),
+#             smart_format=True,
+#             punctuate=True
+#         )
+#         logger.info(f"Chunk size={len(chunk)} bytes")
+#         logger.info(f"Header hexdump (first 128B): {hexdump(chunk, 128)}")
+
+#         try:
+#             response = dg.listen.prerecorded.v("1").transcribe_file(
+#                 {"buffer": buffer, "mimetype": mimetype},
+#                 options
+#             )
+#             transcript = response.results.channels[0].alternatives[0].transcript
+#             logger.info(f"Transcription success: {len(transcript)} characters")
+#             return {
+#                 "status": "success",
+#                 "text": transcript,
+#                 "model": options.model,
+#                 "language": options.language,
+#                 "duration": getattr(response.metadata, 'duration', None)
+#             }
+#         except Exception as e:
+#             logger.error(f"Transcription failed: {str(e)}")
+#             return {
+#                 "status": "error",
+#                 "error": "Audio processing failed",
+#                 "details": str(e)
+#             }
+
+#     except Exception as e:
+#         logger.error(f"Transcription failed: {str(e)}")
+#         return {
+#             "status": "error",
+#             "error": "Audio processing failed",
+#             "details": str(e)
+#         }
+
+# if __name__ == "__main__":
+#     import uvicorn
+#     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+from fastapi import FastAPI, UploadFile, File, Form
+from fastapi.middleware.cors import CORSMiddleware
+from deepgram import DeepgramClient, PrerecordedOptions
+import os
+import logging
+import json
+from dotenv import load_dotenv
+
+load_dotenv()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("deepgram-webm-processor")
+
+app = FastAPI()
+
+# CORS: allow the browser to POST/OPTIONS (and GET if you ever need it)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["POST", "GET", "OPTIONS"],
+    allow_headers=["*"],
+)
+
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
+if not DEEPGRAM_API_KEY:
+    raise RuntimeError("Missing DEEPGRAM_API_KEY")
+dg = DeepgramClient(DEEPGRAM_API_KEY)
+
+# WebM EBML header template (kept as in your original)
+EBML_HEADER = bytes([
+    0x1A, 0x45, 0xDF, 0xA3,  # EBML magic
+    0x01, 0x00, 0x00, 0x00,   # Header size
+    0x42, 0x86, 0x81, 0x01,   # Doc type = "webm"
+    0x18, 0x53, 0x80, 0x67    # Segment info
+])
+
+def validate_and_repair_webm(chunk: bytes) -> bytes:
+    """Ensure the WebM chunk has proper EBML headers"""
+    # Check for existing EBML header
+    if len(chunk) >= 4 and chunk[0] == 0x1A and chunk[1] == 0x45 and chunk[2] == 0xDF and chunk[3] == 0xA3:
+        return chunk  # Already has headers
+    
+    # Prepend EBML header if missing
+    logger.warning("WebM header missing - repairing")
+    return EBML_HEADER + chunk
+
+def hexdump(b: bytes, length: int = 128) -> str:
+    return " ".join(f"{x:02X}" for x in b[:length])
+
+@app.post("/transcribe_chunk")
+async def transcribe_webm(
+    file: UploadFile = File(...),
+    config: str = Form("{}")
+):
+    try:
+        chunk = await file.read()
+        
+        # Skip chunks that are too small to contain meaningful audio
+        if len(chunk) < 2048:
+            logger.info("Skipping small chunk")
+            return {"status": "success", "text": ""}
+
+        # Parse configuration
+        try:
+            cfg = json.loads(config)
+        except json.JSONDecodeError:
+            cfg = {}
+            logger.warning("Using default config")
+
+        # Detect file type
+        ext = os.path.splitext(file.filename)[1].lower()
+        if ext == ".wav":
+            mimetype = "audio/wav"
+            buffer = chunk
+        else:
+            mimetype = "audio/webm;codecs=opus"
+            buffer = validate_and_repair_webm(chunk)
+
+        options = PrerecordedOptions(
+            model=cfg.get("model", "nova-2"),
+            language=cfg.get("language", "en-US"),
+            smart_format=True,
+            punctuate=True
+        )
+        logger.info(f"Chunk size={len(chunk)} bytes")
+        logger.info(f"Header hexdump (first 128B): {hexdump(chunk, 128)}")
+
+        try:
+            response = dg.listen.prerecorded.v("1").transcribe_file(
+                {"buffer": buffer, "mimetype": mimetype},
+                options
+            )
+            transcript = response.results.channels[0].alternatives[0].transcript
+            logger.info(f"Transcription success: {len(transcript)} characters")
+            return {
+                "status": "success",
+                "text": transcript,
+                "model": options.model,
+                "language": options.language,
+                "duration": getattr(response.metadata, 'duration', None)
+            }
+        except Exception as e:
+            logger.error(f"Transcription failed: {str(e)}")
+            # Important: return structured error so the client shows ORANGE (LLM failed)
+            return {
+                "status": "error",
+                "error": "Audio processing failed",
+                "details": str(e)
+            }
+
+    except Exception as e:
+        logger.error(f"Transcription failed: {str(e)}")
+        # Python-level failure → client will show RED after retries
+        return {
+            "status": "error",
+            "error": "Audio processing failed",
+            "details": str(e)
+        }
+
+# NEW: Minimal health endpoint. Posts a tiny WAV to Deepgram to test the full pipeline.
+@app.post("/health_ping")
+async def health_ping(file: UploadFile = File(...)):
+    """
+    Accept a ~1KB audio file and forward to Deepgram to verify the full path.
+    Returns booleans so the UI can set LED:
+      - python_ok: server handled request body
+      - llm_ok: Deepgram call returned without raising
+    """
+    python_ok = False
+    llm_ok = False
+    try:
+        chunk = await file.read()
+        python_ok = True  # reached the handler and read body
+
+        # WAV preferred for this health check, fallback to treating as WebM if needed
+        ext = os.path.splitext(file.filename or "")[1].lower()
+        if ext == ".wav":
+            mimetype = "audio/wav"
+            buffer = chunk
+        else:
+            mimetype = "audio/webm;codecs=opus"
+            buffer = chunk
+
+        options = PrerecordedOptions(
+            model="nova-2",
+            language="en-US",
+            smart_format=True,
+            punctuate=True
+        )
+
+        try:
+            _ = dg.listen.prerecorded.v("1").transcribe_file(
+                {"buffer": buffer, "mimetype": mimetype},
+                options
+            )
+            llm_ok = True
+            return {"status": "ok", "python_ok": python_ok, "llm_ok": llm_ok}
+        except Exception as e:
+            logger.error(f"Health LLM call failed: {str(e)}")
+            return {
+                "status": "error",
+                "python_ok": python_ok,
+                "llm_ok": llm_ok,
+                "details": str(e)
+            }
+
+    except Exception as e:
+        logger.error(f"/health_ping failed: {str(e)}")
+        return {
+            "status": "error",
+            "python_ok": python_ok,  # False
+            "llm_ok": llm_ok,        # False
+            "details": str(e)
+        }
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+
