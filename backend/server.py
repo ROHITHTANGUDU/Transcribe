@@ -12,10 +12,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("deepgram-webm-processor")
 
 app = FastAPI()
+load_dotenv()
 
 
-def configure():
-    load_dotenv()
+    
 
 # CORS: allow the browser to POST/OPTIONS (and GET if you ever need it)
 app.add_middleware(
@@ -179,6 +179,5 @@ async def health_ping(file: UploadFile = File(...)):
 
 if __name__ == "__main__":
     import uvicorn
-    configure()
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
 
